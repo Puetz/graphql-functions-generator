@@ -1,3 +1,8 @@
 /node_modules
+/generated
 /build
 .DS_Store
+src/**/*.js
+src/generated/
+/in/**/*.js
+/in/**/*.ts

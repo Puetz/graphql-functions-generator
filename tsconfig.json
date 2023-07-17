@@ -7,10 +7,12 @@
     "outDir": "build",
     "rootDir": "src",
     "strict": true,
+    "moduleResolution": "node",
     "esModuleInterop": true,
     "types": ["node"],
+    "typeRoots": ["./node_modules/@types", "./types"],
     "skipLibCheck": true
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "types/**/*"],
   "exclude": ["src/**/*.spec.ts"]
 }

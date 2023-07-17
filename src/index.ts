@@ -1,64 +1,94 @@
-import { documents } from "./gql";
-const fs = require("fs");
+import fs from 'fs';
+import fsPromises from 'fs/promises';
+import path from 'path';
 
-const keys: string[] = Object.keys(documents);
-const fragmentsFile = "./generated/fragmentFunctions.ts";
-const mutationsFile = "./generated/mutationFunctions.ts";
-const queriesFile = "./generated/queryFunctions.ts";
-
-let fragments: string[] = [];
-let mutations: string[] = [];
-let queries: string[] = [];
-
-for (let i = 0; i < keys.length; i++) {
-  if (keys[i].startsWith("fragment")) {
-    // prettier-ignore
-    fragments.push(`export const ${keys[i].split(' ')[1]} = graphql(/* GraphQL */ \`${keys[i]}\`);`);
-  } else if (keys[i].startsWith("mutation")) {
-    let title = keys[i].split(" ")[1];
-    title = title.split("(")[0];
-    // prettier-ignore
-    mutations.push(`export const ${title} = graphql(/* GraphQL */ \`${keys[i]}\`);`);
-  } else if (keys[i].startsWith("query")) {
-    let title = "";
-    if (keys[i].startsWith("query All")) {
-      title = keys[i].split(" ")[1];
-    } else {
-      title = keys[i].split(" ")[1];
-      title = title.split("(")[0];
-    }
-    // prettier-ignore
-    queries.push(`export const ${title} = graphql(/* GraphQL */ \`${keys[i]}\`);`);
-  }
+async function generateFunctionsFile(filename: string, statements: any[], outputDir: string) {
+  const content = `import { graphql } from "@/gql"; \r\n` + statements.join("\r\n // prettier-ignore \r\n");
+  await fsPromises.writeFile(path.join(outputDir, filename), content);
 }
 
-let fragmentsString: string = `import { graphql } from "@/gql"; \r\n`;
-let mutationsString: string = `import { graphql } from "@/gql"; \r\n`;
-let queriesString: string = `import { graphql } from "@/gql"; \r\n`;
+export default async function main(gqlInDir = './in/', outputDir = './generated/') {
+  const args = process.argv.slice(2);
+  let params: { [key: string]: string } = {
+    gqlInDir: '',
+    outputDir: '',
+  };
 
-fragments.forEach(async s => {
-  fragmentsString += "\r\n // prettier-ignore \r\n";
-  fragmentsString += s.replaceAll("\n", "\\n");
-});
+  // Parse command-line arguments
+  for (const arg of args) {
+    const [key, value] = arg.split('=');
+    if (key.includes('--')) {
+      params[key.replace('--', '')] = value;
+    }
+  }
 
-mutations.forEach(async s => {
-  mutationsString += "\r\n // prettier-ignore \r\n";
-  mutationsString += s.replaceAll("\n", "\\n");
-});
+  // Resolve file paths
+  params.gqlInDir = params.gqlInDir ? path.resolve(params.gqlInDir) : path.resolve(gqlInDir);
+  params.outputDir = params.outputDir ? path.resolve(params.outputDir) : path.resolve(outputDir);
 
-queries.forEach(async s => {
-  queriesString += "\r\n // prettier-ignore \r\n";
-  queriesString += s.replaceAll("\n", "\\n");
-});
+  if (!fs.existsSync(params.gqlInDir) || !fs.lstatSync(params.gqlInDir).isDirectory()) {
+    console.error(`The folder ${params.gqlInDir} do not exist.`);
+    process.exit(1);
+  }
+  const gqlFilePath = path.resolve(params.gqlInDir + '/gql.ts');
+  const graphqlFilePath = path.resolve(params.gqlInDir + '/graphql.ts');
+  if (!fs.existsSync(gqlFilePath) || !fs.existsSync(graphqlFilePath)) {
+    console.error(`The folder ${params.gqlInDir} do not contain the file gql.ts or graphql.ts.`);
+    process.exit(1);
+  }
 
-fs.writeFile(fragmentsFile, fragmentsString, function (err: any) {
-  if (err) return console.log(err);
-});
+  // Check if outputDir exists, if not, create it
+  if (!fs.existsSync(params.outputDir)) {
+    fs.mkdirSync(params.outputDir);
+  }
 
-fs.writeFile(mutationsFile, mutationsString, function (err: any) {
-  if (err) return console.log(err);
-});
+  let documents;
+  const { exec } = require('child_process');
+  exec('tsc ' + gqlFilePath, (error: { message: any; }, stdout: any, stderr: any) => {
+    if (error) {
+      console.error(`Error while compiling the files: ${error.message}`);
+      process.exit(1);
+    }
+    if (stderr) {
+      console.error(`Error while compiling the files: ${stderr}`);
+      process.exit(1);
+    }
+    console.log(`Compiled TypeScript file: ${stdout}`);
 
-fs.writeFile(queriesFile, queriesString, function (err: any) {
-  if (err) return console.log(err);
-});
+    // Import the compiled JavaScript file
+    const jsFilePath = gqlFilePath.replace('.ts', '.js');
+    import(jsFilePath).then(async (module) => {
+      const documents = module.documents;
+      const fragments = [];
+      const mutations = [];
+      const queries = [];
+
+      for (const key of Object.keys(documents)) {
+        const words = key.split(' ');
+        const type = words[0];
+        const name = words[1].split('(')[0];
+
+        if (type === 'fragment') {
+          fragments.push(`export const ${name} = graphql(/* GraphQL */ \`${key}\`);`);
+        } else if (type === 'mutation') {
+          mutations.push(`export const ${name} = graphql(/* GraphQL */ \`${key}\`);`);
+        } else if (type === 'query') {
+          queries.push(`export const ${name} = graphql(/* GraphQL */ \`${key}\`);`);
+        }
+      }
+
+      try {
+        await generateFunctionsFile('fragmentFunctions.ts', fragments, params.outputDir);
+        await generateFunctionsFile('mutationFunctions.ts', mutations, params.outputDir);
+        await generateFunctionsFile('queryFunctions.ts', queries, params.outputDir);
+      } catch (error: any) {
+        console.error(`Error while writing to the files: ${error.message}`);
+        process.exit(1);
+      }
+    }).catch((error) => {
+      console.error(`Error while importing the file: ${error.message}`);
+      process.exit(1);
+    });
+  });
+}
+main();
